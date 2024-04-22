@@ -18,13 +18,15 @@ interface Option {
 type ColumnsConfig = Array<[string, keyof Asset, number]>;
 
 const columns: Array<[string, keyof Asset, number]> = [
-  ["Name", "name", 6],
-  ["Tags", "tags", 3],
+  ["Name", "name", 7],
+  ["Tags", "tags", 1],
+  ["Assigned", "assignedTo", 1],
   ["Type", "type", 1],
   ["Date Added", "date_added", 1],
   // plus one for the expand/collapse + selected-record (meta) columns
 
   ["Folder", "folder", 0],
+  ["Tags", "tags", 0],
   ["Added By", "addedBy", 0],
   ["Assigned Salespersons", "assignedTo", 0],
   ["Keywords", "keywords", 0],
@@ -40,31 +42,17 @@ const isArray = (function () {
   return (q: unknown) => regex.test({}.toString.call(q));
 })();
 
-function compareStrings(a: string, b: string) {
-  return a > b ? 1 : a < b ? -1 : 0;
-}
+const compareStrings = (a: string, b: string) => (a > b ? 1 : a < b ? -1 : 0);
 
 type Children<T = JSX.Element | string> = T | T[];
 
-function Badge({
-  onClick,
-  style,
-  text,
-  width = 28,
-}: {
-  onClick?: () => void;
-  style?: object;
-  text: string;
-  width?: number;
-}) {
+function Badge({ text }: { text: string }) {
   return (
     <span
-      className={`border border-slate-400 inline-block mr-1 whitespace-nowrap px-2 rounded-lg text-ellipsis overflow-hidden ... min-w-${width} w-${width} hover:w-auto`}
-      onClick={onClick}
-      style={style}
+      className="border w-7 h-7 rounded-full inline-flex items-center justify-center bg-white text-gray-700 font-bold"
       title={text}
     >
-      {text}
+      {text.at(0)}
     </span>
   );
 }
@@ -73,7 +61,7 @@ type ItemProps = {
   columns: ColumnsConfig;
   detail?: ColumnsConfig;
   label: string;
-  render: (a: { prop: keyof Asset; text: string }) => Children;
+  render: (a: { prop: keyof Asset; text: string }, b?: boolean) => Children;
   Toggle: ({ detail }: { detail: RefObject<HTMLDetailsElement> }) => Children;
 };
 
@@ -100,52 +88,80 @@ function Item({ columns, detail, label, render, Toggle }: ItemProps) {
               <div>
                 <strong>{text}</strong>
               </div>
-              {render({ prop, text })}
+              {render({ prop, text }, true)}
             </div>
           ))}
 
-          <button>Edit</button>
-          <button>Delete</button>
+          <div className="flex gap-2 justify-end">
+            <button className="bg-green-700 hover:bg-green-800 font-bold px-6 py-2 rounded-lg text-white">
+              Edit
+            </button>
+            <button className="bg-red-700 hover:bg-red-800 font-bold px-6 py-2 rounded-lg text-white">
+              Delete
+            </button>
+          </div>
         </details>
       )}
     </div>
   );
 }
 
-function DetailToggle({ detail }: { detail: RefObject<HTMLDetailsElement> }) {
+function DetailToggle({
+  className,
+  detail,
+}: {
+  className: string;
+  detail: RefObject<HTMLDetailsElement>;
+}) {
+  const [hidden, setHidden] = useState(true);
+
   return (
-    <Badge
+    <button
+      className={className}
       onClick={() => {
         if (detail.current) {
+          setHidden(!hidden);
           detail.current.open = !detail.current.open;
         }
       }}
-      style={{
-        cursor: "pointer",
-        textAlign: "center",
-        userSelect: "none",
-      }}
-      text={"Details"}
-      width={22}
-    />
+      title="Show (or Hide) the details for this item."
+    >
+      {hidden ? "Show" : "Hide"}
+    </button>
   );
 }
 
 function Display({ data }: { data: Asset[] }) {
-  const [folderToggles, setFolderToggles] = useState<Record<string, boolean>>(
-    {},
-  );
+  const folders = Array.from(new Set(data.map(({ folder }) => folder)));
   const hidden = columns.filter((col) => col[2] === 0);
   const visible = columns.filter((col) => col[2] > 0);
 
+  const [allFoldersOpen, setAllFoldersOpen] = useState(true);
+  const [folderToggles, setFolderToggles] = useState<Record<string, boolean>>(
+    {},
+  );
+
   return (
     <div>
-      <Item
-        columns={visible}
-        label={"heading"}
-        render={({ text }: { text: string }) => <strong>{text}</strong>}
-        Toggle={() => <div style={{ flex: "1 0 0%" }}>{""}</div>}
-      />
+      <span
+        onClick={() => {
+          folders.forEach((name) => (folderToggles[name] = allFoldersOpen));
+
+          setAllFoldersOpen(!allFoldersOpen);
+        }}
+        style={{ cursor: "pointer", userSelect: "none" }}
+      >
+        Toggle Folders {allFoldersOpen ? "Closed" : "Open"}
+      </span>
+
+      <div>
+        <Item
+          columns={visible}
+          label={"heading"}
+          render={({ text }: { text: string }) => <strong>{text}</strong>}
+          Toggle={() => <div style={{ flex: "1 0 0%" }}>{""}</div>}
+        />
+      </div>
 
       {data
         .sort(
@@ -157,6 +173,7 @@ function Display({ data }: { data: Asset[] }) {
           !(index && data[index - 1].folder === asset.folder) && (
             <div
               className="bg-gray-600 p-3 text-white"
+              key={`folder-${asset.folder}`}
               onClick={() => {
                 setFolderToggles({
                   ...folderToggles,
@@ -168,26 +185,36 @@ function Display({ data }: { data: Asset[] }) {
               <strong>{asset.folder}</strong>
             </div>
           ),
+
           !folderToggles[asset.folder] && (
             <Item
               columns={visible}
               detail={hidden}
               key={asset.id}
               label={"asset"}
-              render={({ prop }) =>
-                !isArray(asset[prop])
-                  ? (asset[prop] as string)
-                  : (asset[prop] as string[]).map((text) => (
-                      <Badge key={text} text={text} />
-                    ))
-              }
+              render={({ prop }, isDetailsSection = false) => {
+                let val = asset[prop];
+
+                if (prop !== "tags" && !isArray(val)) return val as string;
+
+                val ??= []; // for consistency
+
+                if (isDetailsSection) {
+                  return (val as string[]).map((text) => (
+                    <li key={text}>{text}</li>
+                  ));
+                }
+
+                return <Badge text={"" + val.length} />;
+              }}
               Toggle={({
                 detail,
               }: {
                 detail: RefObject<HTMLDetailsElement>;
               }) => (
-                <div style={{ flex: "1 0 0%" }}>
-                  <DetailToggle detail={detail} />
+                <div className="flex flex-1 gap-3 justify-end justify-items-end">
+                  <button className="w-1/2">View</button>
+                  <DetailToggle className="w-1/2 flex-grow-0" detail={detail} />
                 </div>
               )}
             />
