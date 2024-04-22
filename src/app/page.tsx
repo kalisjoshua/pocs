@@ -15,36 +15,48 @@ interface Option {
   text: string;
 }
 
-// .container {
-//   display: grid;
-//   grid-template-columns: 50px 50px 50px 50px;
-//   grid-template-rows: auto;
-//   grid-template-areas:
-//     "header header header header"
-//     "main main . sidebar"
-//     "footer footer footer footer";
+type ColumnsConfig = {
+  offset: {
+    col: number;
+    row: number;
+  };
+  prop: keyof Asset;
+  span: number;
+  text: string;
+};
 
-//   grid-template-areas:
-//     "name        tags      type       date_added"
-//     "folder"
-//     "addedBy     assignedTo"
-//     "keywords"
-//     "notes"
-// }
-
-const columns: Array<[string, keyof Asset, number]> = [
-  ["Name", "name", 8],
-  ["Tags", "tags", 6], // render tags fn
-  ["Type", "type", 2],
-  ["Date Added", "date_added", 2],
+const columnsRaw: Array<[string, keyof Asset, number]> = [
+  ["Name", "name", 6],
+  ["Tags", "tags", 3],
+  ["Type", "type", 1],
+  ["Date Added", "date_added", 1],
+  // plus one for the expand/collapse + selected-record (meta) columns
 
   ["Folder", "folder", 0],
   ["Added By", "addedBy", 0],
   ["Assigned Salespersons", "assignedTo", 0],
   ["Keywords", "keywords", 0],
   ["Notes", "notes", 0],
+  // additional row for "Edit" (or "Save") and "Delete"
 ];
-const columnUnitCount = columns.reduce((acc, [_a, _b, num]) => acc + num, 1);
+const columns: Array<ColumnsConfig> = columnsRaw.reduce<ColumnsConfig[]>(
+  (acc, [text, prop, span], index) => {
+    const prev = acc[index - 1];
+
+    acc.push({
+      offset: {
+        col: index && span ? prev.offset.col + prev.span : 1,
+        row: !span ? prev.offset.row + 1 : 1,
+      },
+      prop,
+      span,
+      text,
+    });
+
+    return acc;
+  },
+  [],
+);
 const data = raw as unknown as Asset[];
 const options: Array<Option> = [option1, option2];
 
@@ -54,39 +66,55 @@ const isArray = (function () {
   return (q: unknown) => regex.test({}.toString.call(q));
 })();
 
-type Children = JSX.Element | string | Children[];
+type Children<T = JSX.Element | string> = T | T[];
 
-type CellProps = {
-  children: Children;
-  units: number;
-};
-
-function Cell({ children, units }: CellProps) {
-  const attrs = {
-    className: units ? "" : "hidden",
-    style: {
-      width: `calc(${units} * calc(100% / ${columnUnitCount}))`,
-    },
-  };
-
-  return <div {...attrs}>{children}</div>;
+function Badge({ text }: { text: string }) {
+  return (
+    <span
+      className="border border-slate-400 inline-block mr-1 whitespace-nowrap px-2 rounded-lg text-ellipsis overflow-hidden ... min-w-28 w-28 hover:w-auto"
+      title={text}
+    >
+      {text}
+    </span>
+  );
 }
 
-function Row({
-  children,
-  label,
-  render,
-}: {
-  children: JSX.Element;
+type FieldProps = {
+  children: Children;
+  col?: number;
+  row?: number;
+  span?: number;
+};
+
+function Field({ children, col = 0, row = 0, span = 0 }: FieldProps) {
+  return (
+    <div
+      style={{
+        gridColumnEnd: row === 1 ? col + span : 999,
+        gridColumnStart: col,
+        gridRowEnd: row,
+        gridRowStart: row,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+type ItemProps = {
+  children?: JSX.Element;
+  columns: Array<ColumnsConfig>;
   label: string;
   render: (a: { prop: keyof Asset; text: string }) => Children;
-}) {
+};
+
+function Item({ children, columns, label, render }: ItemProps) {
   return (
-    <div className="even:bg-gray-200 flex flex-row p-3">
-      {columns.map(([text, prop, units]) => (
-        <Cell key={`${label}-${prop}`} units={units}>
+    <div className={`even:bg-gray-200 grid grid-cols-12 p-3`}>
+      {columns.map(({ offset, prop, span, text }) => (
+        <Field key={`${label}-${prop}`} {...{ span, ...offset }}>
           {render({ prop, text })}
-        </Cell>
+        </Field>
       ))}
 
       {children}
@@ -97,33 +125,31 @@ function Row({
 function Display({ data }: { data: Asset[] }) {
   return (
     <div>
-      <Row
+      <Item
+        columns={columns.filter(({ offset }) => offset.row === 1)}
         label={"heading"}
         render={({ text }: { text: string }) => <strong>{text}</strong>}
       >
-        <Cell units={1}>{""}</Cell>
-      </Row>
+        <Field>{""}</Field>
+      </Item>
 
       {data.map((asset) => (
-        <Row
+        <Item
+          columns={columns}
           key={asset.id}
           label={"asset"}
           render={({ prop }) =>
-            isArray(asset[prop])
-              ? (asset[prop] as string[]).map((text) => (
-                  <span
-                    className="bg-rose-900 text-white inline-block mr-1 -my-2 whitespace-nowrap px-2 py-1 rounded-lg text-ellipsis overflow-hidden ... min-w-28 w-28 hover:w-auto"
-                    key={text}
-                    title={text}
-                  >
-                    {text}
-                  </span>
+            !isArray(asset[prop])
+              ? (asset[prop] as string)
+              : (asset[prop] as string[]).map((text) => (
+                  <Badge key={text} text={text} />
                 ))
-              : (asset[prop] as string)
           }
         >
-          <Cell units={1}>{"+?"}</Cell>
-        </Row>
+          <Field col={12} row={1} span={1}>
+            {"+?"}
+          </Field>
+        </Item>
       ))}
     </div>
   );
