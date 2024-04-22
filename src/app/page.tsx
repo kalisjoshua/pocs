@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { RefObject, useRef, useState } from "react";
 
 import type { Asset } from "./Asset";
 import type { ComponentProps } from "./ComponentProps";
@@ -15,17 +15,9 @@ interface Option {
   text: string;
 }
 
-type ColumnsConfig = {
-  offset: {
-    col: number;
-    row: number;
-  };
-  prop: keyof Asset;
-  span: number;
-  text: string;
-};
+type ColumnsConfig = Array<[string, keyof Asset, number]>;
 
-const columnsRaw: Array<[string, keyof Asset, number]> = [
+const columns: Array<[string, keyof Asset, number]> = [
   ["Name", "name", 6],
   ["Tags", "tags", 3],
   ["Type", "type", 1],
@@ -39,24 +31,6 @@ const columnsRaw: Array<[string, keyof Asset, number]> = [
   ["Notes", "notes", 0],
   // additional row for "Edit" (or "Save") and "Delete"
 ];
-const columns: Array<ColumnsConfig> = columnsRaw.reduce<ColumnsConfig[]>(
-  (acc, [text, prop, span], index) => {
-    const prev = acc[index - 1];
-
-    acc.push({
-      offset: {
-        col: index && span ? prev.offset.col + prev.span : 1,
-        row: !span ? prev.offset.row + 1 : 1,
-      },
-      prop,
-      span,
-      text,
-    });
-
-    return acc;
-  },
-  [],
-);
 const data = raw as unknown as Asset[];
 const options: Array<Option> = [option1, option2];
 
@@ -66,12 +40,28 @@ const isArray = (function () {
   return (q: unknown) => regex.test({}.toString.call(q));
 })();
 
+function compareStrings(a: string, b: string) {
+  return a > b ? 1 : a < b ? -1 : 0;
+}
+
 type Children<T = JSX.Element | string> = T | T[];
 
-function Badge({ text }: { text: string }) {
+function Badge({
+  onClick,
+  style,
+  text,
+  width = 28,
+}: {
+  onClick?: () => void;
+  style?: object;
+  text: string;
+  width?: number;
+}) {
   return (
     <span
-      className="border border-slate-400 inline-block mr-1 whitespace-nowrap px-2 rounded-lg text-ellipsis overflow-hidden ... min-w-28 w-28 hover:w-auto"
+      className={`border border-slate-400 inline-block mr-1 whitespace-nowrap px-2 rounded-lg text-ellipsis overflow-hidden ... min-w-${width} w-${width} hover:w-auto`}
+      onClick={onClick}
+      style={style}
       title={text}
     >
       {text}
@@ -79,78 +69,130 @@ function Badge({ text }: { text: string }) {
   );
 }
 
-type FieldProps = {
-  children: Children;
-  col?: number;
-  row?: number;
-  span?: number;
+type ItemProps = {
+  columns: ColumnsConfig;
+  detail?: ColumnsConfig;
+  label: string;
+  render: (a: { prop: keyof Asset; text: string }) => Children;
+  Toggle: ({ detail }: { detail: RefObject<HTMLDetailsElement> }) => Children;
 };
 
-function Field({ children, col = 0, row = 0, span = 0 }: FieldProps) {
+function Item({ columns, detail, label, render, Toggle }: ItemProps) {
+  const detailRef = useRef<HTMLDetailsElement>(null);
+
   return (
-    <div
-      style={{
-        gridColumnEnd: row === 1 ? col + span : 999,
-        gridColumnStart: col,
-        gridRowEnd: row,
-        gridRowStart: row,
-      }}
-    >
-      {children}
+    <div className={`even:bg-gray-200 p-3`}>
+      <div className="flex">
+        {columns.map(([text, prop, unit]) => (
+          <div key={`${label}-${prop}`} style={{ flex: `${unit} 0 0%` }}>
+            {render({ prop, text })}
+          </div>
+        ))}
+
+        <Toggle detail={detailRef} />
+      </div>
+
+      {detail && (
+        <details ref={detailRef}>
+          <summary style={{ display: "none" }}></summary>
+          {detail.map(([text, prop, unit]) => (
+            <div key={`${label}-${prop}`} style={{ flex: `${unit} 0 0%` }}>
+              <div>
+                <strong>{text}</strong>
+              </div>
+              {render({ prop, text })}
+            </div>
+          ))}
+
+          <button>Edit</button>
+          <button>Delete</button>
+        </details>
+      )}
     </div>
   );
 }
 
-type ItemProps = {
-  children?: JSX.Element;
-  columns: Array<ColumnsConfig>;
-  label: string;
-  render: (a: { prop: keyof Asset; text: string }) => Children;
-};
-
-function Item({ children, columns, label, render }: ItemProps) {
+function DetailToggle({ detail }: { detail: RefObject<HTMLDetailsElement> }) {
   return (
-    <div className={`even:bg-gray-200 grid grid-cols-12 p-3`}>
-      {columns.map(({ offset, prop, span, text }) => (
-        <Field key={`${label}-${prop}`} {...{ span, ...offset }}>
-          {render({ prop, text })}
-        </Field>
-      ))}
-
-      {children}
-    </div>
+    <Badge
+      onClick={() => {
+        if (detail.current) {
+          detail.current.open = !detail.current.open;
+        }
+      }}
+      style={{
+        cursor: "pointer",
+        textAlign: "center",
+        userSelect: "none",
+      }}
+      text={"Details"}
+      width={22}
+    />
   );
 }
 
 function Display({ data }: { data: Asset[] }) {
+  const [folderToggles, setFolderToggles] = useState<Record<string, boolean>>(
+    {},
+  );
+  const hidden = columns.filter((col) => col[2] === 0);
+  const visible = columns.filter((col) => col[2] > 0);
+
   return (
     <div>
       <Item
-        columns={columns.filter(({ offset }) => offset.row === 1)}
+        columns={visible}
         label={"heading"}
         render={({ text }: { text: string }) => <strong>{text}</strong>}
-      >
-        <Field>{""}</Field>
-      </Item>
+        Toggle={() => <div style={{ flex: "1 0 0%" }}>{""}</div>}
+      />
 
-      {data.map((asset) => (
-        <Item
-          columns={columns}
-          key={asset.id}
-          label={"asset"}
-          render={({ prop }) =>
-            !isArray(asset[prop])
-              ? (asset[prop] as string)
-              : (asset[prop] as string[]).map((text) => (
-                  <Badge key={text} text={text} />
-                ))
-          }
-        >
-          <Field col={12} row={1} span={1}>
-            {"+?"}
-          </Field>
-        </Item>
-      ))}
+      {data
+        .sort(
+          (a, b) =>
+            compareStrings(a.folder.toLowerCase(), b.folder.toLowerCase()) ||
+            compareStrings(a.name.toLowerCase(), b.name.toLowerCase()),
+        )
+        .flatMap((asset, index) => [
+          !(index && data[index - 1].folder === asset.folder) && (
+            <div
+              className="bg-gray-600 p-3 text-white"
+              onClick={() => {
+                setFolderToggles({
+                  ...folderToggles,
+                  [asset.folder]: !folderToggles[asset.folder],
+                });
+              }}
+              style={{ borderBottom: "1px solid", cursor: "pointer", flex: 12 }}
+            >
+              <strong>{asset.folder}</strong>
+            </div>
+          ),
+          !folderToggles[asset.folder] && (
+            <Item
+              columns={visible}
+              detail={hidden}
+              key={asset.id}
+              label={"asset"}
+              render={({ prop }) =>
+                !isArray(asset[prop])
+                  ? (asset[prop] as string)
+                  : (asset[prop] as string[]).map((text) => (
+                      <Badge key={text} text={text} />
+                    ))
+              }
+              Toggle={({
+                detail,
+              }: {
+                detail: RefObject<HTMLDetailsElement>;
+              }) => (
+                <div style={{ flex: "1 0 0%" }}>
+                  <DetailToggle detail={detail} />
+                </div>
+              )}
+            />
+          ),
+        ])}
     </div>
   );
 }
@@ -160,8 +202,8 @@ export default function Home() {
   const OptionComponent = options[selected].Component;
 
   return (
-    <main className="flex gap-4">
-      <nav className="flex-initial min-w-64">
+    <main className="flex gap-4 p-8">
+      {/* <nav className="flex-initial min-w-64">
         <ul>
           {options.map(({ text }, key) => (
             <li key={text}>
@@ -169,7 +211,7 @@ export default function Home() {
             </li>
           ))}
         </ul>
-      </nav>
+      </nav> */}
 
       <article className="flex-auto">
         <OptionComponent
